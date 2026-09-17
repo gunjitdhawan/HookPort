@@ -1,0 +1,126 @@
+package io.hookport.endpoint;
+
+import io.hookport.shared.PageResponse;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
+import org.springframework.http.HttpStatus;
+import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.net.URI;
+import java.net.URISyntaxException;
+import java.security.SecureRandom;
+import java.util.Base64;
+import java.util.Set;
+import java.util.UUID;
+
+@Service
+public class WebhookEndpointService {
+
+    private static final Set<String> ALLOWED_SCHEMES =
+            Set.of("http", "https");
+
+    private final WebhookEndpointRepository repository;
+    private final SecureRandom secureRandom = new SecureRandom();
+
+    public WebhookEndpointService(WebhookEndpointRepository repository) {
+        this.repository = repository;
+    }
+
+    @Transactional
+    public CreateEndpointResponse create(CreateEndpointRequest request) {
+        String name = request.name().trim();
+
+        if (repository.existsByName(name)) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "An endpoint with this name already exists"
+            );
+        }
+
+        String targetUrl = validateAndNormalizeUrl(request.targetUrl());
+        String signingSecret = generateSigningSecret();
+
+        WebhookEndpoint endpoint = WebhookEndpoint.create(
+                name,
+                targetUrl,
+                signingSecret
+        );
+
+        WebhookEndpoint savedEndpoint = repository.save(endpoint);
+
+        return new CreateEndpointResponse(
+                savedEndpoint.getId(),
+                savedEndpoint.getName(),
+                savedEndpoint.getTargetUrl(),
+                savedEndpoint.getStatus(),
+                savedEndpoint.getSigningSecret(),
+                savedEndpoint.getCreatedAt()
+        );
+    }
+
+    private String validateAndNormalizeUrl(String value) {
+        try {
+            URI uri = new URI(value.trim());
+
+            String scheme = uri.getScheme();
+
+            if (scheme == null ||
+                    !ALLOWED_SCHEMES.contains(scheme.toLowerCase()) ||
+                    uri.getHost() == null) {
+                throw invalidTargetUrl();
+            }
+
+            return uri.normalize().toString();
+
+        } catch (URISyntaxException exception) {
+            throw invalidTargetUrl();
+        }
+    }
+
+    private ResponseStatusException invalidTargetUrl() {
+        return new ResponseStatusException(
+                HttpStatus.BAD_REQUEST,
+                "targetUrl must be a valid HTTP or HTTPS URL"
+        );
+    }
+
+    private String generateSigningSecret() {
+        byte[] randomBytes = new byte[32];
+        secureRandom.nextBytes(randomBytes);
+
+        return Base64.getUrlEncoder()
+                .withoutPadding()
+                .encodeToString(randomBytes);
+    }
+
+    @Transactional(readOnly = true)
+    public EndpointResponse getById(UUID endpointId) {
+        WebhookEndpoint endpoint = repository.findById(endpointId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Webhook endpoint not found"
+                ));
+
+        return EndpointResponse.from(endpoint);
+    }
+
+    @Transactional(readOnly = true)
+    public PageResponse<EndpointResponse> getAll(int page, int size) {
+        int safeSize = Math.min(size, 100);
+
+        PageRequest pageRequest = PageRequest.of(
+                page,
+                safeSize,
+                Sort.by(Sort.Direction.DESC, "createdAt")
+        );
+
+        Page<EndpointResponse> result = repository
+                .findAll(pageRequest)
+                .map(EndpointResponse::from);
+
+        return PageResponse.from(result);
+    }
+}

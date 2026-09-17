@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: hookport-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-hookport}
+      POSTGRES_USER: ${DATABASE_USERNAME:-hookport}
+      POSTGRES_PASSWORD: ${DATABASE_PASSWORD:-hookport_dev}
+    ports:
+      - "5432:5432"
+    volumes:
+      - hookport-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  hookport-postgres-data:
