@@ -9,6 +9,7 @@ public record CreateEndpointResponse(
         String targetUrl,
         EndpointStatus status,
         String signingSecret,
-        Instant createdAt
+        Instant createdAt,
+        Long version
 ) {
 }

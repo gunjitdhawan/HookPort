@@ -8,4 +8,5 @@ public interface WebhookEndpointRepository
         extends JpaRepository<WebhookEndpoint, UUID> {
 
     boolean existsByName(String name);
+    boolean existsByNameAndIdNot(String name, UUID id);
 }

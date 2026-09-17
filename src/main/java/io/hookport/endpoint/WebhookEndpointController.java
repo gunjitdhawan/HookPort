@@ -2,6 +2,7 @@ package io.hookport.endpoint;
 
 import io.hookport.shared.PageResponse;
 import jakarta.validation.Valid;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -32,14 +33,19 @@ public class WebhookEndpointController {
 
         return ResponseEntity
                 .created(location)
+                .eTag(EndpointEtag.fromVersion(response.version()))
                 .body(response);
     }
 
     @GetMapping("/{endpointId}")
-    public EndpointResponse getById(
+    public ResponseEntity<EndpointResponse> getById(
             @PathVariable UUID endpointId
     ) {
-        return service.getById(endpointId);
+        EndpointResponse response = service.getById(endpointId);
+        return ResponseEntity
+                .ok()
+                .eTag(EndpointEtag.fromVersion(response.version()))
+                .body(response);
     }
 
     @GetMapping
@@ -62,5 +68,23 @@ public class WebhookEndpointController {
         }
 
         return service.getAll(page, size);
+    }
+
+    @PatchMapping("/{endpointId}")
+    public ResponseEntity<EndpointResponse> update(
+            @PathVariable UUID endpointId,
+            @RequestHeader(
+                    value = HttpHeaders.IF_MATCH,
+                    required = false
+            ) String ifMatch,
+            @Valid @RequestBody UpdateEndpointRequest request
+    ) {
+        long expectedVersion = EndpointEtag.parseRequired(ifMatch);
+        EndpointResponse response = service.update(endpointId, request, expectedVersion);
+        return ResponseEntity
+                .ok()
+                .eTag(EndpointEtag.fromVersion(response.version()))
+                .body(response);
+
     }
 }

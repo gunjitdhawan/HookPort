@@ -30,6 +30,76 @@ public class WebhookEndpointService {
     }
 
     @Transactional
+    public EndpointResponse update(UUID endpointId, UpdateEndpointRequest request, long expectedVersion) {
+        if (request.name() == null &&
+                request.targetUrl() == null &&
+                request.status() == null) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "At least one field must be supplied"
+            );
+        }
+
+        WebhookEndpoint endpoint = repository.findById(endpointId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Webhook endpoint not found"
+                ));
+
+        if (!endpoint.getVersion().equals(expectedVersion)) {
+            throw new ResponseStatusException(
+                    HttpStatus.PRECONDITION_FAILED,
+                    "The endpoint was modified after it was retrieved"
+            );
+        }
+
+        String updatedName = endpoint.getName();
+        String updatedTargetUrl = endpoint.getTargetUrl();
+        EndpointStatus updatedStatus = endpoint.getStatus();
+
+        if(request.name()!=null) {
+            updatedName = request.name().trim();
+        }
+
+        if(updatedName.isBlank()) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "name must not be blank");
+
+        if (!updatedName.equals(endpoint.getName()) &&
+                repository.existsByNameAndIdNot(
+                        updatedName,
+                        endpointId
+                )) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "An endpoint with this name already exists"
+            );
+        }
+
+        if (request.targetUrl() != null) {
+            updatedTargetUrl =
+                    validateAndNormalizeUrl(request.targetUrl());
+        }
+
+        if (request.status() != null) {
+            updatedStatus = request.status();
+        }
+
+        endpoint.update(
+                updatedName,
+                updatedTargetUrl,
+                updatedStatus
+        );
+
+        /*
+         * The entity is managed, so save() is not required.
+         * flush() executes the SQL now and updates the version
+         * before we create the response.
+         */
+        repository.flush();
+
+        return EndpointResponse.from(endpoint);
+    }
+
+    @Transactional
     public CreateEndpointResponse create(CreateEndpointRequest request) {
         String name = request.name().trim();
 
@@ -57,7 +127,9 @@ public class WebhookEndpointService {
                 savedEndpoint.getTargetUrl(),
                 savedEndpoint.getStatus(),
                 savedEndpoint.getSigningSecret(),
-                savedEndpoint.getCreatedAt()
+                savedEndpoint.getCreatedAt(),
+                savedEndpoint.getVersion()
+
         );
     }
 

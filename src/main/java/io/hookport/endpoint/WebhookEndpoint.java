@@ -31,6 +31,10 @@ public class WebhookEndpoint {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    @Version
+    @Column(nullable = false)
+    private Long version;
+
     protected WebhookEndpoint() {
         // Required by JPA
     }
@@ -42,7 +46,8 @@ public class WebhookEndpoint {
             EndpointStatus status,
             String signingSecret,
             Instant createdAt,
-            Instant updatedAt
+            Instant updatedAt,
+            Long version
     ) {
         this.id = id;
         this.name = name;
@@ -51,6 +56,7 @@ public class WebhookEndpoint {
         this.signingSecret = signingSecret;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
+        this.version=version;
     }
 
     public static WebhookEndpoint create(
@@ -67,8 +73,20 @@ public class WebhookEndpoint {
                 EndpointStatus.ACTIVE,
                 signingSecret,
                 now,
-                now
+                now,
+                0L
         );
+    }
+
+    public void update(
+            String name,
+            String targetUrl,
+            EndpointStatus status
+    ) {
+        this.name = name;
+        this.targetUrl = targetUrl;
+        this.status = status;
+        this.updatedAt = Instant.now();
     }
 
     public UUID getId() {
@@ -97,5 +115,9 @@ public class WebhookEndpoint {
 
     public Instant getUpdatedAt() {
         return updatedAt;
+    }
+
+    public Long getVersion() {
+        return version;
     }
 }

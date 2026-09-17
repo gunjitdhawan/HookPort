@@ -9,7 +9,8 @@ public record EndpointResponse(
     String targetUrl,
     EndpointStatus status,
     Instant createdAt,
-    Instant updatedAt) {
+    Instant updatedAt,
+    Long version) {
     public static EndpointResponse from(WebhookEndpoint endpoint) {
         return new EndpointResponse(
                 endpoint.getId(),
@@ -17,7 +18,8 @@ public record EndpointResponse(
                 endpoint.getTargetUrl(),
                 endpoint.getStatus(),
                 endpoint.getCreatedAt(),
-                endpoint.getUpdatedAt()
+                endpoint.getUpdatedAt(),
+                endpoint.getVersion()
         );
     }
 }
