@@ -46,8 +46,7 @@ public class WebhookEndpoint {
             EndpointStatus status,
             String signingSecret,
             Instant createdAt,
-            Instant updatedAt,
-            Long version
+            Instant updatedAt
     ) {
         this.id = id;
         this.name = name;
@@ -56,7 +55,6 @@ public class WebhookEndpoint {
         this.signingSecret = signingSecret;
         this.createdAt = createdAt;
         this.updatedAt = updatedAt;
-        this.version=version;
     }
 
     public static WebhookEndpoint create(
@@ -73,8 +71,7 @@ public class WebhookEndpoint {
                 EndpointStatus.ACTIVE,
                 signingSecret,
                 now,
-                now,
-                0L
+                now
         );
     }
 
