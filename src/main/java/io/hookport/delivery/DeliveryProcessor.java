@@ -22,16 +22,31 @@ public class DeliveryProcessor {
         ClaimedDelivery delivery =
                 stateService.claim(deliveryId);
 
-        WebhookSendResult result = httpSender.send(delivery);
+        return processClaimed(delivery);
+    }
+
+    public DeliveryAttemptResponse processClaimed(
+            ClaimedDelivery delivery
+    ) {
+        WebhookSendResult sendResult;
+
+        try {
+            sendResult = httpSender.send(delivery);
+        } catch (RuntimeException exception) {
+            sendResult = WebhookSendResult.networkFailure(
+                    exception,
+                    0
+            );
+        }
+
         DeliveryStatus finalStatus = stateService.complete(
-                deliveryId,
+                delivery.deliveryId(),
                 delivery.attemptId(),
-                result
+                sendResult
         );
 
-
         return new DeliveryAttemptResponse(
-                deliveryId,
+                delivery.deliveryId(),
                 delivery.attemptNumber(),
                 finalStatus
         );

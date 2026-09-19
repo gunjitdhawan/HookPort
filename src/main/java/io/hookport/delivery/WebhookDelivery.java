@@ -144,6 +144,14 @@ public class WebhookDelivery {
         updatedAt = Instant.now();
     }
 
+    public void markExhausted() {
+        requireInProgress();
+
+        status = DeliveryStatus.EXHAUSTED;
+        nextAttemptAt = null;
+        updatedAt = Instant.now();
+    }
+
     private void requireInProgress() {
         if (status != DeliveryStatus.IN_PROGRESS) {
             throw new IllegalStateException(

@@ -17,7 +17,9 @@ import tools.jackson.databind.node.ObjectNode;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "hookport.delivery.scheduling-enabled=false"
+})
 @Testcontainers
 public class WebhookEventPersistenceTest {
     @Autowired
