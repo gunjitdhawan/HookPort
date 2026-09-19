@@ -14,11 +14,15 @@ import java.util.UUID;
 public class DeliveryStateService {
 
     private final WebhookDeliveryRepository repository;
+    private final DeliveryAttemptRepository attemptRepository;
+
 
     public DeliveryStateService(
-            WebhookDeliveryRepository repository
+            WebhookDeliveryRepository repository,
+            DeliveryAttemptRepository attemptRepository
     ) {
         this.repository = repository;
+        this.attemptRepository = attemptRepository;
     }
 
     @Transactional
@@ -42,11 +46,15 @@ public class DeliveryStateService {
             );
         }
 
+        DeliveryAttempt attempt = attemptRepository.save(DeliveryAttempt.start(delivery, delivery.getAttemptCount()));
+
         repository.flush();
+        attemptRepository.flush();
 
         return new ClaimedDelivery(
                 delivery.getId(),
                 delivery.getEvent().getId(),
+                attempt.getId(),
                 delivery.getEvent().getEventType(),
                 delivery.getEvent().getPayload(),
                 delivery.getEvent().getCreatedAt(),
@@ -80,5 +88,48 @@ public class DeliveryStateService {
                         HttpStatus.NOT_FOUND,
                         "Webhook delivery not found"
                 ));
+    }
+
+    @Transactional
+    public DeliveryStatus complete(
+            UUID deliveryId,
+            UUID attemptId,
+            WebhookSendResult result
+    ) {
+        WebhookDelivery delivery = find(deliveryId);
+
+        DeliveryAttempt attempt = attemptRepository
+                .findById(attemptId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.NOT_FOUND,
+                        "Delivery attempt not found"
+                ));
+
+        if (!attempt.getDelivery().getId().equals(deliveryId)) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Attempt does not belong to the delivery"
+            );
+        }
+
+        attempt.complete(result);
+
+        switch (result.outcome()) {
+            case DELIVERED ->
+                    delivery.markDelivered();
+
+            case RETRYABLE_FAILURE ->
+                    delivery.markRetryScheduled(
+                            Instant.now().plusSeconds(30)
+                    );
+
+            case PERMANENT_FAILURE ->
+                    delivery.markFailedPermanently();
+        }
+
+        repository.flush();
+        attemptRepository.flush();
+
+        return delivery.getStatus();
     }
 }

@@ -5,5 +5,6 @@ public enum DeliveryStatus {
     IN_PROGRESS,
     DELIVERED,
     RETRY_SCHEDULED,
-    EXHAUSTED
+    EXHAUSTED,
+    FAILED
 }

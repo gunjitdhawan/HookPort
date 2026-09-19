@@ -7,6 +7,7 @@ import java.util.UUID;
 
 public record ClaimedDelivery(
         UUID deliveryId,
+        UUID attemptId,
         UUID eventId,
         String eventType,
         JsonNode payload,

@@ -22,20 +22,18 @@ public class DeliveryProcessor {
         ClaimedDelivery delivery =
                 stateService.claim(deliveryId);
 
-        boolean successful = httpSender.send(delivery);
+        WebhookSendResult result = httpSender.send(delivery);
+        DeliveryStatus finalStatus = stateService.complete(
+                deliveryId,
+                delivery.attemptId(),
+                result
+        );
 
-        if (successful) {
-            stateService.markDelivered(deliveryId);
-        } else {
-            stateService.markFailed(deliveryId);
-        }
 
         return new DeliveryAttemptResponse(
                 deliveryId,
                 delivery.attemptNumber(),
-                successful
-                        ? DeliveryStatus.DELIVERED
-                        : DeliveryStatus.RETRY_SCHEDULED
+                finalStatus
         );
     }
 }

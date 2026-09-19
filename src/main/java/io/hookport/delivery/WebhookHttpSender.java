@@ -14,7 +14,7 @@ public class WebhookHttpSender {
         this.restClient = restClient;
     }
 
-    public boolean send(ClaimedDelivery delivery) {
+    public WebhookSendResult send(ClaimedDelivery delivery) {
         WebhookEnvelope envelope = new WebhookEnvelope(
                 delivery.eventId(),
                 delivery.eventType(),
@@ -22,8 +22,10 @@ public class WebhookHttpSender {
                 delivery.payload()
         );
 
+        long startedAt = System.nanoTime();
+
         try {
-            return restClient
+            int status = restClient
                     .post()
                     .uri(delivery.targetUrl())
                     .contentType(MediaType.APPLICATION_JSON)
@@ -37,11 +39,22 @@ public class WebhookHttpSender {
                     )
                     .body(envelope)
                     .exchange((request, response) ->
-                            response.getStatusCode()
-                                    .is2xxSuccessful()
+                            response.getStatusCode().value()
                     );
+            return WebhookSendResult.fromHttpStatus(
+                    status,
+                    elapsedMillis(startedAt)
+            );
+
         } catch (RestClientException exception) {
-            return false;
+            return WebhookSendResult.networkFailure(
+                    exception,
+                    elapsedMillis(startedAt)
+            );
         }
+    }
+
+    private long elapsedMillis(long startedAt) {
+        return (System.nanoTime() - startedAt) / 1_000_000;
     }
 }
