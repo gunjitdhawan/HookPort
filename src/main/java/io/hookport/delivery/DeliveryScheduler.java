@@ -24,6 +24,7 @@ public class DeliveryScheduler {
                     "${hookport.delivery.poll-interval-ms:1000}"
     )
     public void poll() {
+        worker.recoverStuck();
         worker.runOnce();
     }
 }

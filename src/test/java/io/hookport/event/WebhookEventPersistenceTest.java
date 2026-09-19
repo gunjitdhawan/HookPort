@@ -1,8 +1,6 @@
 package io.hookport.event;
 
-import io.hookport.delivery.DeliveryStatus;
-import io.hookport.delivery.WebhookDelivery;
-import io.hookport.delivery.WebhookDeliveryRepository;
+import io.hookport.delivery.*;
 import io.hookport.endpoint.*;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -14,6 +12,9 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
+import java.time.Instant;
+import java.util.concurrent.*;
+
 import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
@@ -24,6 +25,12 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 public class WebhookEventPersistenceTest {
     @Autowired
     private WebhookEventRepository eventRepository;
+
+    @Autowired
+    private DeliveryStateService deliveryStateService;
+
+    @Autowired
+    private DeliveryAttemptRepository attemptRepository;
 
     @Autowired
     private WebhookDeliveryRepository deliveryRepository;
@@ -282,5 +289,135 @@ public class WebhookEventPersistenceTest {
 
         assertThat(eventRepository.count()).isEqualTo(0);
         assertThat(deliveryRepository.count()).isEqualTo(0);
+    }
+
+    @Test
+    void shouldRecoverDeliveryStuckInProgress() {
+        CreateEndpointResponse endpoint = service.create(
+                new CreateEndpointRequest(
+                        "recovery-endpoint",
+                        "http://localhost:9999/webhook"
+                )
+        );
+
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.put("message", "recovery test");
+
+        PublishEventResponse published =
+                publishEventService.publish(
+                        endpoint.id(),
+                        "recovery-test-key",
+                        new PublishEventRequest(
+                                "test.recovery",
+                                payload
+                        )
+                );
+
+        ClaimedDelivery claimed =
+                deliveryStateService.claim(
+                        published.deliveryId()
+                );
+
+        /*
+         * A future cutoff makes the recently claimed delivery
+         * eligible without making the test sleep.
+         */
+        int recovered =
+                deliveryStateService.recoverStuckDeliveries(
+                        Instant.now().plusSeconds(1),
+                        10
+                );
+
+        assertThat(recovered).isEqualTo(1);
+
+        WebhookDelivery delivery = deliveryRepository
+                .findById(published.deliveryId())
+                .orElseThrow();
+
+        assertThat(delivery.getStatus())
+                .isEqualTo(DeliveryStatus.RETRY_SCHEDULED);
+
+        assertThat(delivery.getNextAttemptAt()).isNotNull();
+
+        DeliveryAttempt attempt = attemptRepository
+                .findById(claimed.attemptId())
+                .orElseThrow();
+
+        assertThat(attempt.getOutcome())
+                .isEqualTo(AttemptOutcome.RETRYABLE_FAILURE);
+
+        assertThat(attempt.getCompletedAt()).isNotNull();
+    }
+
+    @Test
+    void shouldAllowOnlyOneWorkerToClaimDelivery()
+            throws Exception {
+
+        CreateEndpointResponse endpoint = service.create(
+                new CreateEndpointRequest(
+                        "concurrent-endpoint",
+                        "http://localhost:9999/webhook"
+                )
+        );
+
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.put("message", "concurrency test");
+
+        publishEventService.publish(
+                endpoint.id(),
+                "concurrent-test-key",
+                new PublishEventRequest(
+                        "test.concurrent",
+                        payload
+                )
+        );
+
+        ExecutorService executor =
+                Executors.newFixedThreadPool(2);
+
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        Callable<Integer> claimTask = () -> {
+            ready.countDown();
+            start.await();
+
+            return deliveryStateService
+                    .claimDueBatch(
+                            Instant.now(),
+                            10
+                    )
+                    .size();
+        };
+
+        try {
+            Future<Integer> first =
+                    executor.submit(claimTask);
+
+            Future<Integer> second =
+                    executor.submit(claimTask);
+
+            ready.await();
+            start.countDown();
+
+            int totalClaimed =
+                    first.get() + second.get();
+
+            assertThat(totalClaimed).isEqualTo(1);
+            assertThat(attemptRepository.count()).isEqualTo(1);
+
+            WebhookDelivery delivery =
+                    deliveryRepository.findAll()
+                            .getFirst();
+
+            assertThat(delivery.getStatus())
+                    .isEqualTo(DeliveryStatus.IN_PROGRESS);
+
+            assertThat(delivery.getAttemptCount())
+                    .isEqualTo(1);
+
+        } finally {
+            executor.shutdownNow();
+        }
     }
 }

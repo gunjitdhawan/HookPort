@@ -6,6 +6,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -155,5 +156,59 @@ public class DeliveryStateService {
                 delivery.getEndpoint().getTargetUrl(),
                 delivery.getAttemptCount()
         );
+    }
+
+    @Transactional
+    public int recoverStuckDeliveries(
+            Instant cutoff,
+            int batchSize
+    ) {
+        List<WebhookDelivery> stuckDeliveries =
+                repository.findStuckForUpdate(
+                        cutoff,
+                        batchSize
+                );
+
+        Instant now = Instant.now();
+
+        for (WebhookDelivery delivery : stuckDeliveries) {
+            DeliveryAttempt attempt = attemptRepository
+                    .findFirstByDeliveryIdAndCompletedAtIsNullOrderByAttemptNumberDesc(
+                            delivery.getId()
+                    )
+                    .orElseThrow(() -> new IllegalStateException(
+                            "IN_PROGRESS delivery has no incomplete attempt: "
+                                    + delivery.getId()
+                    ));
+
+            long durationMs = Math.max(
+                    0,
+                    Duration.between(
+                            attempt.getStartedAt(),
+                            now
+                    ).toMillis()
+            );
+
+            attempt.complete(
+                    WebhookSendResult.abandoned(durationMs)
+            );
+
+            if (delivery.getAttemptCount()
+                    >= properties.getMaxAttempts()) {
+                delivery.markExhausted();
+            } else {
+                delivery.markRetryScheduled(
+                        retryPolicy.nextRetryAt(
+                                now,
+                                delivery.getAttemptCount()
+                        )
+                );
+            }
+        }
+
+        attemptRepository.flush();
+        repository.flush();
+
+        return stuckDeliveries.size();
     }
 }

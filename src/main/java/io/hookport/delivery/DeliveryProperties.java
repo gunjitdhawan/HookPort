@@ -11,6 +11,8 @@ public class DeliveryProperties {
     private int maxAttempts = 5;
     private long baseDelaySeconds = 30;
     private long maxDelaySeconds = 3600;
+    private long stuckTimeoutSeconds = 30;
+    private int recoveryBatchSize = 20;
 
     public boolean isSchedulingEnabled() {
         return schedulingEnabled;
@@ -58,6 +60,14 @@ public class DeliveryProperties {
 
     public void setMaxDelaySeconds(long maxDelaySeconds) {
         this.maxDelaySeconds = maxDelaySeconds;
+    }
+
+    public long getStuckTimeoutSeconds() {
+        return stuckTimeoutSeconds;
+    }
+
+    public int getRecoveryBatchSize() {
+        return recoveryBatchSize;
     }
 
     public void prop() {

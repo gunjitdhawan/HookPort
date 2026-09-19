@@ -35,4 +35,15 @@ public class DeliveryWorker {
 
         return deliveries.size();
     }
+
+    public int recoverStuck() {
+        Instant cutoff = Instant.now().minusSeconds(
+                properties.getStuckTimeoutSeconds()
+        );
+
+        return stateService.recoverStuckDeliveries(
+                cutoff,
+                properties.getRecoveryBatchSize()
+        );
+    }
 }

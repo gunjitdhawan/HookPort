@@ -33,4 +33,21 @@ public interface WebhookDeliveryRepository
             @Param("now") Instant now,
             @Param("batchSize") int batchSize
     );
+
+    @Query(
+            value = """
+                SELECT *
+                FROM webhook_deliveries
+                WHERE status = 'IN_PROGRESS'
+                  AND updated_at <= :cutoff
+                ORDER BY updated_at ASC
+                FOR UPDATE SKIP LOCKED
+                LIMIT :batchSize
+                """,
+            nativeQuery = true
+    )
+    List<WebhookDelivery> findStuckForUpdate(
+            @Param("cutoff") Instant cutoff,
+            @Param("batchSize") int batchSize
+    );
 }

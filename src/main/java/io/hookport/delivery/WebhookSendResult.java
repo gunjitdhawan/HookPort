@@ -50,4 +50,15 @@ public record WebhookSendResult(
                 durationMs
         );
     }
+
+    public static WebhookSendResult abandoned(
+            long durationMs
+    ) {
+        return new WebhookSendResult(
+                AttemptOutcome.RETRYABLE_FAILURE,
+                null,
+                "Worker stopped before completing the delivery attempt",
+                durationMs
+        );
+    }
 }

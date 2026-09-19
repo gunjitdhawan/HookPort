@@ -103,4 +103,12 @@ public class DeliveryAttempt {
     public Long getDurationMs() {
         return durationMs;
     }
+
+    public Instant getStartedAt() {
+        return startedAt;
+    }
+
+    public Instant getCompletedAt() {
+        return completedAt;
+    }
 }
