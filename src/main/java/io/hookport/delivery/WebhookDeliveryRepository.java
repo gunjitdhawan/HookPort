@@ -8,5 +8,5 @@ import java.util.UUID;
 public interface WebhookDeliveryRepository
         extends JpaRepository<WebhookDelivery, UUID> {
 
-    Optional<WebhookDelivery> findByEventId(UUID eventId);
+    Optional<WebhookDelivery> findByEventIdAndEndpointId(UUID eventId, UUID endpointId);
 }
