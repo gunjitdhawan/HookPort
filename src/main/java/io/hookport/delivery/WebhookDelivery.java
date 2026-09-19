@@ -105,4 +105,42 @@ public class WebhookDelivery {
     public Long getVersion() {
         return version;
     }
+
+    public void claim() {
+        if (status != DeliveryStatus.PENDING &&
+                status != DeliveryStatus.RETRY_SCHEDULED) {
+            throw new IllegalStateException(
+                    "Delivery cannot be claimed from status " + status
+            );
+        }
+
+        status = DeliveryStatus.IN_PROGRESS;
+        attemptCount++;
+        nextAttemptAt = null;
+        updatedAt = Instant.now();
+    }
+
+    public void markDelivered() {
+        requireInProgress();
+
+        status = DeliveryStatus.DELIVERED;
+        nextAttemptAt = null;
+        updatedAt = Instant.now();
+    }
+
+    public void markRetryScheduled(Instant retryAt) {
+        requireInProgress();
+
+        status = DeliveryStatus.RETRY_SCHEDULED;
+        nextAttemptAt = retryAt;
+        updatedAt = Instant.now();
+    }
+
+    private void requireInProgress() {
+        if (status != DeliveryStatus.IN_PROGRESS) {
+            throw new IllegalStateException(
+                    "Delivery must be IN_PROGRESS, but was " + status
+            );
+        }
+    }
 }
