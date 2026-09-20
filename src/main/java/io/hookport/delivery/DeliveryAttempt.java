@@ -111,4 +111,8 @@ public class DeliveryAttempt {
     public Instant getCompletedAt() {
         return completedAt;
     }
+
+    public String getErrorMessage() {
+        return errorMessage;
+    }
 }

@@ -1,5 +1,7 @@
 package io.hookport.delivery;
 
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -49,5 +51,10 @@ public interface WebhookDeliveryRepository
     List<WebhookDelivery> findStuckForUpdate(
             @Param("cutoff") Instant cutoff,
             @Param("batchSize") int batchSize
+    );
+
+    Page<WebhookDelivery> findByEndpoint_Id(
+            UUID endpointId,
+            Pageable pageable
     );
 }
