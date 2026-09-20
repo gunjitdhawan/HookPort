@@ -1,5 +1,6 @@
 package io.hookport.endpoint;
 
+import io.hookport.security.TargetUrlValidator;
 import io.hookport.shared.PageResponse;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -24,9 +25,12 @@ public class WebhookEndpointService {
 
     private final WebhookEndpointRepository repository;
     private final SecureRandom secureRandom = new SecureRandom();
+    private final TargetUrlValidator targetUrlValidator;
 
-    public WebhookEndpointService(WebhookEndpointRepository repository) {
+    public WebhookEndpointService(WebhookEndpointRepository repository,
+                                  TargetUrlValidator targetUrlValidator) {
         this.repository = repository;
+        this.targetUrlValidator = targetUrlValidator;
     }
 
     @Transactional
@@ -77,6 +81,7 @@ public class WebhookEndpointService {
         if (request.targetUrl() != null) {
             updatedTargetUrl =
                     validateAndNormalizeUrl(request.targetUrl());
+            targetUrlValidator.validate(updatedTargetUrl);
         }
 
         if (request.status() != null) {
@@ -112,7 +117,7 @@ public class WebhookEndpointService {
 
         String targetUrl = validateAndNormalizeUrl(request.targetUrl());
         String signingSecret = generateSigningSecret();
-
+        targetUrlValidator.validate(request.targetUrl());
         WebhookEndpoint endpoint = WebhookEndpoint.create(
                 name,
                 targetUrl,

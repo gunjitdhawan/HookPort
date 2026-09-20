@@ -1,5 +1,7 @@
 package io.hookport.delivery;
 
+import io.hookport.security.TargetUrlValidator;
+import io.hookport.security.UnsafeTargetUrlException;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
@@ -14,13 +16,15 @@ public class WebhookHttpSender {
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
     private final WebhookSigner signer;
+    private final TargetUrlValidator targetUrlValidator;
 
     public WebhookHttpSender(RestClient restClient,
                              ObjectMapper objectMapper,
-                             WebhookSigner signer) {
+                             WebhookSigner signer, TargetUrlValidator targetUrlValidator) {
         this.restClient = restClient;
         this.objectMapper = objectMapper;
         this.signer = signer;
+        this.targetUrlValidator = targetUrlValidator;
     }
 
     public WebhookSendResult send(ClaimedDelivery delivery) {
@@ -62,6 +66,15 @@ public class WebhookHttpSender {
         }
 
         try {
+            targetUrlValidator.validate(delivery.targetUrl());
+        } catch (UnsafeTargetUrlException exception) {
+            return WebhookSendResult.permanentFailure(
+                    exception.getMessage(),
+                    elapsedMillis(startedAt)
+            );
+        }
+
+        try {
             int status = restClient
                     .post()
                     .uri(delivery.targetUrl())
@@ -86,6 +99,14 @@ public class WebhookHttpSender {
                     .exchange((request, response) ->
                             response.getStatusCode().value()
                     );
+
+            if (status >= 300 && status < 400) {
+                return WebhookSendResult.permanentFailure(
+                        "Webhook redirects are not allowed",
+                        elapsedMillis(startedAt)
+                );
+            }
+
             return WebhookSendResult.fromHttpStatus(
                     status,
                     elapsedMillis(startedAt)
