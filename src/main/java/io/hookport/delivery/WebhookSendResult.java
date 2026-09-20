@@ -61,4 +61,16 @@ public record WebhookSendResult(
                 durationMs
         );
     }
+
+    public static WebhookSendResult permanentFailure(
+            String message,
+            long durationMs
+    ) {
+        return new WebhookSendResult(
+                AttemptOutcome.PERMANENT_FAILURE,
+                null,
+                message,
+                durationMs
+        );
+    }
 }

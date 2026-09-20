@@ -154,6 +154,7 @@ public class DeliveryStateService {
                 delivery.getEvent().getPayload(),
                 delivery.getEvent().getCreatedAt(),
                 delivery.getEndpoint().getTargetUrl(),
+                delivery.getEndpoint().getSigningSecret(),
                 delivery.getAttemptCount()
         );
     }

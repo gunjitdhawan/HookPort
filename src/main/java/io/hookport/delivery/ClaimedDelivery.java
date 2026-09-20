@@ -13,6 +13,7 @@ public record ClaimedDelivery(
         JsonNode payload,
         Instant eventCreatedAt,
         String targetUrl,
+        String signingSecret,
         int attemptNumber
 ) {
 }

@@ -4,14 +4,23 @@ import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import tools.jackson.databind.ObjectMapper;
+
+import java.time.Instant;
 
 @Component
 public class WebhookHttpSender {
 
     private final RestClient restClient;
+    private final ObjectMapper objectMapper;
+    private final WebhookSigner signer;
 
-    public WebhookHttpSender(RestClient restClient) {
+    public WebhookHttpSender(RestClient restClient,
+                             ObjectMapper objectMapper,
+                             WebhookSigner signer) {
         this.restClient = restClient;
+        this.objectMapper = objectMapper;
+        this.signer = signer;
     }
 
     public WebhookSendResult send(ClaimedDelivery delivery) {
@@ -23,6 +32,34 @@ public class WebhookHttpSender {
         );
 
         long startedAt = System.nanoTime();
+
+        final byte[] body;
+
+        try {
+            body = objectMapper.writeValueAsBytes(envelope);
+        } catch (Exception exception) {
+            return WebhookSendResult.permanentFailure(
+                    "Unable to serialize webhook payload",
+                    elapsedMillis(startedAt)
+            );
+        }
+
+        long timestamp = Instant.now().getEpochSecond();
+
+        final String signature;
+
+        try {
+            signature = signer.sign(
+                    delivery.signingSecret(),
+                    timestamp,
+                    body
+            );
+        } catch (IllegalStateException exception) {
+            return WebhookSendResult.permanentFailure(
+                    exception.getMessage(),
+                    elapsedMillis(startedAt)
+            );
+        }
 
         try {
             int status = restClient
@@ -37,7 +74,15 @@ public class WebhookHttpSender {
                             "X-HookPort-Event-Type",
                             delivery.eventType()
                     )
-                    .body(envelope)
+                    .header(
+                            "X-HookPort-Timestamp",
+                            Long.toString(timestamp)
+                    )
+                    .header(
+                            "X-HookPort-Signature",
+                            signature
+                    )
+                    .body(body)
                     .exchange((request, response) ->
                             response.getStatusCode().value()
                     );
