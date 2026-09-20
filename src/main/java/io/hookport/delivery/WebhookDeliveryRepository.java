@@ -7,6 +7,7 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 import java.time.Instant;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -56,5 +57,9 @@ public interface WebhookDeliveryRepository
     Page<WebhookDelivery> findByEndpoint_Id(
             UUID endpointId,
             Pageable pageable
+    );
+
+    long countByStatusIn(
+            Collection<DeliveryStatus> statuses
     );
 }

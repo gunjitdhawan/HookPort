@@ -1,6 +1,8 @@
 package io.hookport.delivery;
 
 import io.hookport.endpoint.EndpointStatus;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,6 +14,8 @@ import java.util.UUID;
 public class DeliveryReplayService {
 
     private final WebhookDeliveryRepository deliveryRepository;
+    private static final Logger log =
+            LoggerFactory.getLogger(DeliveryReplayService.class);
 
     public DeliveryReplayService(
             WebhookDeliveryRepository deliveryRepository
@@ -47,6 +51,12 @@ public class DeliveryReplayService {
                 WebhookDelivery.replayOf(original);
 
         deliveryRepository.save(replay);
+
+        log.info(
+                "Created delivery replay: originalDeliveryId={}, replayDeliveryId={}",
+                original.getId(),
+                replay.getId()
+        );
 
         return new ReplayDeliveryResponse(
                 original.getId(),
