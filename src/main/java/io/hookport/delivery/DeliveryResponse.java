@@ -11,7 +11,8 @@ public record DeliveryResponse(
         int attemptCount,
         Instant nextAttemptAt,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        UUID replayedFromDeliveryId
 ) {
     public static DeliveryResponse from(
             WebhookDelivery delivery
@@ -24,7 +25,10 @@ public record DeliveryResponse(
                 delivery.getAttemptCount(),
                 delivery.getNextAttemptAt(),
                 delivery.getCreatedAt(),
-                delivery.getUpdatedAt()
+                delivery.getUpdatedAt(),
+                delivery.getReplayedFrom() == null
+                        ? null
+                        : delivery.getReplayedFrom().getId()
         );
     }
 }

@@ -39,6 +39,10 @@ public class WebhookDelivery {
     @Column(name = "updated_at", nullable = false)
     private Instant updatedAt;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "replayed_from_delivery_id")
+    private WebhookDelivery replayedFrom;
+
     @Version
     @Column(nullable = false)
     private Long version;
@@ -158,5 +162,33 @@ public class WebhookDelivery {
                     "Delivery must be IN_PROGRESS, but was " + status
             );
         }
+    }
+
+    public static WebhookDelivery replayOf(
+            WebhookDelivery original
+    ) {
+        WebhookDelivery replay = new WebhookDelivery();
+
+        replay.endpoint = original.endpoint;
+        replay.event = original.event;
+        replay.status = DeliveryStatus.PENDING;
+        replay.attemptCount = 0;
+        replay.nextAttemptAt = null;
+        replay.replayedFrom = original;
+
+        Instant now = Instant.now();
+        replay.createdAt = now;
+        replay.updatedAt = now;
+
+        return replay;
+    }
+
+    public WebhookDelivery getReplayedFrom() {
+        return replayedFrom;
+    }
+
+    public boolean canReplay() {
+        return status == DeliveryStatus.FAILED
+                || status == DeliveryStatus.EXHAUSTED;
     }
 }
