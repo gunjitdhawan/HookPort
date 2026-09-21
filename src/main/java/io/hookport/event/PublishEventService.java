@@ -5,6 +5,8 @@ import io.hookport.delivery.WebhookDeliveryRepository;
 import io.hookport.endpoint.EndpointStatus;
 import io.hookport.endpoint.WebhookEndpoint;
 import io.hookport.endpoint.WebhookEndpointRepository;
+import io.hookport.outbox.EventAcceptedMessage;
+import io.hookport.outbox.EventOutboxWriter;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -18,15 +20,18 @@ public class PublishEventService {
     private final WebhookEndpointRepository endpointRepository;
     private final WebhookEventRepository eventRepository;
     private final WebhookDeliveryRepository deliveryRepository;
+    private final EventOutboxWriter eventOutboxWriter;
 
     public PublishEventService(
             WebhookEndpointRepository endpointRepository,
             WebhookEventRepository eventRepository,
-            WebhookDeliveryRepository deliveryRepository
+            WebhookDeliveryRepository deliveryRepository,
+            EventOutboxWriter eventOutboxWriter
     ) {
         this.endpointRepository = endpointRepository;
         this.eventRepository = eventRepository;
         this.deliveryRepository = deliveryRepository;
+        this.eventOutboxWriter = eventOutboxWriter;
     }
 
     @Transactional
@@ -79,9 +84,18 @@ public class PublishEventService {
         );
 
         /*
-         * Execute the inserts before creating the response.
+         * Send the pending JPA inserts to PostgreSQL before the JDBC
+         * outbox insert. Flush does not commit the transaction.
          */
         deliveryRepository.flush();
+
+        eventOutboxWriter.write(
+                new EventAcceptedMessage(
+                        event.getId(),
+                        endpointId,
+                        delivery.getId(),
+                        event.getEventType()
+                ));
 
         return toResponse(event, delivery, false);
     }
