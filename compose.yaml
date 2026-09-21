@@ -16,5 +16,22 @@ services:
       timeout: 5s
       retries: 10
 
+  hookport:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      DATABASE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-hookport}
+      DB_USERNAME: ${DATABASE_USERNAME:-hookport}
+      DB_PASSWORD: ${DATABASE_PASSWORD:-hookport_dev}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U hookport -d hookport" ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   hookport-postgres-data:
