@@ -7,11 +7,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
-@SpringBootTest
-@Testcontainers
 public class WebhookSecurityTest {
-    @Autowired
-    private TargetUrlValidator validator;
+
+    private final TargetUrlValidator validator =
+            new TargetUrlValidator(new WebhookSecurityProperties());
 
     @Test
     void shouldRejectLoopbackTarget() {

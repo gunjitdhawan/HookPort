@@ -419,4 +419,98 @@ public class WebhookEventPersistenceTest {
             executor.shutdownNow();
         }
     }
+
+    @Test
+    void oneTokenAllowsOnlyOneOfTwoConcurrentDeliveryClaims()
+            throws Exception {
+        CreateEndpointResponse endpoint = service.create(
+                new CreateEndpointRequest(
+                        "shared-bucket-endpoint",
+                        "http://localhost:9999/webhook",
+                        1,
+                        1
+                )
+        );
+
+        ObjectNode payload = objectMapper.createObjectNode();
+        payload.put("message", "shared bucket");
+
+        PublishEventResponse firstDelivery =
+                publishEventService.publish(
+                        endpoint.id(),
+                        "shared-bucket-event-1",
+                        new PublishEventRequest("test.created", payload)
+                );
+
+        PublishEventResponse secondDelivery =
+                publishEventService.publish(
+                        endpoint.id(),
+                        "shared-bucket-event-2",
+                        new PublishEventRequest("test.created", payload)
+                );
+
+        // Start with exactly one token. The future timestamp prevents
+        // refill before the competing claims begin.
+        jdbcTemplate.update("""
+        UPDATE endpoint_rate_buckets
+        SET tokens = 1,
+            refilled_at = now() + interval '1 hour'
+        WHERE endpoint_id = ?
+        """, endpoint.id());
+
+        ExecutorService executor =
+                Executors.newFixedThreadPool(2);
+        CountDownLatch ready = new CountDownLatch(2);
+        CountDownLatch start = new CountDownLatch(1);
+
+        Callable<ClaimDecision> claimTask = () -> {
+            ready.countDown();
+            start.await();
+            return deliveryStateService.claimNextDue();
+        };
+
+        try {
+            Future<ClaimDecision> first =
+                    executor.submit(claimTask);
+            Future<ClaimDecision> second =
+                    executor.submit(claimTask);
+
+            assertThat(ready.await(5, TimeUnit.SECONDS))
+                    .isTrue();
+            start.countDown();
+
+            ClaimDecision firstResult =
+                    first.get(10, TimeUnit.SECONDS);
+            ClaimDecision secondResult =
+                    second.get(10, TimeUnit.SECONDS);
+
+            int successfulClaims =
+                    (firstResult.claimed() == null ? 0 : 1)
+                            + (secondResult.claimed() == null ? 0 : 1);
+
+            assertThat(successfulClaims).isEqualTo(1);
+            assertThat(attemptRepository.count()).isEqualTo(1);
+
+            WebhookDelivery firstRow = deliveryRepository
+                    .findById(firstDelivery.deliveryId())
+                    .orElseThrow();
+            WebhookDelivery secondRow = deliveryRepository
+                    .findById(secondDelivery.deliveryId())
+                    .orElseThrow();
+
+            int inProgress =
+                    (firstRow.getStatus() == DeliveryStatus.IN_PROGRESS
+                            ? 1 : 0)
+                            + (secondRow.getStatus() == DeliveryStatus.IN_PROGRESS
+                            ? 1 : 0);
+
+            assertThat(inProgress).isEqualTo(1);
+            assertThat(
+                    firstRow.getAttemptCount()
+                            + secondRow.getAttemptCount()
+            ).isEqualTo(1);
+        } finally {
+            executor.shutdownNow();
+        }
+    }
 }
