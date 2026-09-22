@@ -10,6 +10,8 @@ public record CreateEndpointResponse(
         EndpointStatus status,
         String signingSecret,
         Instant createdAt,
-        Long version
+        Long version,
+        int bucketCapacity,
+        int refillPerSecond
 ) {
 }

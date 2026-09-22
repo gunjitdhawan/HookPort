@@ -13,6 +13,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.net.URI;
 import java.net.URISyntaxException;
 import java.security.SecureRandom;
+import java.time.Instant;
 import java.util.Base64;
 import java.util.Set;
 import java.util.UUID;
@@ -26,18 +27,23 @@ public class WebhookEndpointService {
     private final WebhookEndpointRepository repository;
     private final SecureRandom secureRandom = new SecureRandom();
     private final TargetUrlValidator targetUrlValidator;
+    private final EndpointRateBucketRepository buckets;
 
     public WebhookEndpointService(WebhookEndpointRepository repository,
-                                  TargetUrlValidator targetUrlValidator) {
+                                  TargetUrlValidator targetUrlValidator,
+                                  EndpointRateBucketRepository bucketRepository) {
         this.repository = repository;
         this.targetUrlValidator = targetUrlValidator;
+        this.buckets = bucketRepository;
     }
 
     @Transactional
     public EndpointResponse update(UUID endpointId, UpdateEndpointRequest request, long expectedVersion) {
         if (request.name() == null &&
                 request.targetUrl() == null &&
-                request.status() == null) {
+                request.status() == null &&
+                request.bucketCapacity() == null &&
+                request.refillPerSecond() == null) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
                     "At least one field must be supplied"
@@ -88,6 +94,32 @@ public class WebhookEndpointService {
             updatedStatus = request.status();
         }
 
+        EndpointRateBucket bucket;
+
+        if (request.bucketCapacity() != null
+                || request.refillPerSecond() != null) {
+            bucket = buckets.findForSettingsUpdate(endpointId)
+                    .orElseThrow(() -> new IllegalStateException(
+                            "Endpoint has no rate bucket: " + endpointId
+                    ));
+
+            int capacity = request.bucketCapacity() == null
+                    ? bucket.getCapacity()
+                    : request.bucketCapacity();
+
+            int refillRate = request.refillPerSecond() == null
+                    ? bucket.getRefillPerSecond()
+                    : request.refillPerSecond();
+
+            bucket.changeSettings(
+                    capacity,
+                    refillRate,
+                    Instant.now()
+            );
+        } else {
+            bucket = bucketFor(endpointId);
+        }
+
         endpoint.update(
                 updatedName,
                 updatedTargetUrl,
@@ -99,9 +131,10 @@ public class WebhookEndpointService {
          * flush() executes the SQL now and updates the version
          * before we create the response.
          */
+        buckets.flush();
         repository.flush();
 
-        return EndpointResponse.from(endpoint);
+        return EndpointResponse.from(endpoint, bucketFor(endpointId));
     }
 
     @Transactional
@@ -116,6 +149,12 @@ public class WebhookEndpointService {
         }
 
         String targetUrl = validateAndNormalizeUrl(request.targetUrl());
+        int capacity = request.bucketCapacity() == null
+                ? 5 : request.bucketCapacity();
+        int refillRate = request.refillPerSecond() == null
+                ? 5 : request.refillPerSecond();
+
+
         String signingSecret = generateSigningSecret();
         targetUrlValidator.validate(request.targetUrl());
         WebhookEndpoint endpoint = WebhookEndpoint.create(
@@ -125,6 +164,12 @@ public class WebhookEndpointService {
         );
 
         WebhookEndpoint savedEndpoint = repository.save(endpoint);
+        buckets.save(EndpointRateBucket.full(
+                savedEndpoint.getId(),
+                capacity,
+                refillRate,
+                Instant.now()
+        ));
 
         return new CreateEndpointResponse(
                 savedEndpoint.getId(),
@@ -133,7 +178,9 @@ public class WebhookEndpointService {
                 savedEndpoint.getStatus(),
                 savedEndpoint.getSigningSecret(),
                 savedEndpoint.getCreatedAt(),
-                savedEndpoint.getVersion()
+                savedEndpoint.getVersion(),
+                capacity,
+                refillRate
 
         );
     }
@@ -181,7 +228,7 @@ public class WebhookEndpointService {
                         "Webhook endpoint not found"
                 ));
 
-        return EndpointResponse.from(endpoint);
+        return EndpointResponse.from(endpoint, bucketFor(endpointId));
     }
 
     @Transactional(readOnly = true)
@@ -196,8 +243,15 @@ public class WebhookEndpointService {
 
         Page<EndpointResponse> result = repository
                 .findAll(pageRequest)
-                .map(EndpointResponse::from);
+                .map(endpoint -> EndpointResponse.from(endpoint, bucketFor(endpoint.getId())));
 
         return PageResponse.from(result);
+    }
+
+    private EndpointRateBucket bucketFor(UUID endpointId) {
+        return buckets.findById(endpointId)
+                .orElseThrow(() -> new IllegalStateException(
+                        "Endpoint has no rate bucket: " + endpointId
+                ));
     }
 }

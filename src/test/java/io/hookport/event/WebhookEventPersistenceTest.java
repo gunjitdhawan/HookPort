@@ -6,9 +6,13 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.server.ResponseStatusException;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.junit.jupiter.Container;
+import org.testcontainers.postgresql.PostgreSQLContainer;
 import tools.jackson.databind.ObjectMapper;
 import tools.jackson.databind.node.ObjectNode;
 
@@ -19,10 +23,19 @@ import static org.assertj.core.api.AssertionsForClassTypes.assertThat;
 import static org.assertj.core.api.AssertionsForClassTypes.assertThatThrownBy;
 
 @SpringBootTest(properties = {
-        "hookport.delivery.scheduling-enabled=false"
+        "hookport.delivery.scheduling-enabled=false",
+        "hookport.outbox.enabled=false",
+        "hookport.security.allow-private-targets=true"
 })
 @Testcontainers
 public class WebhookEventPersistenceTest {
+    @Container
+    @ServiceConnection
+    static final PostgreSQLContainer postgres =
+            new PostgreSQLContainer("postgres:17-alpine");
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
     @Autowired
     private WebhookEventRepository eventRepository;
 
@@ -49,7 +62,9 @@ public class WebhookEventPersistenceTest {
 
     @BeforeEach
     void cleanDatabase() {
+        attemptRepository.deleteAll();
         deliveryRepository.deleteAll();
+        jdbcTemplate.update("DELETE FROM event_outbox");
         eventRepository.deleteAll();
         repository.deleteAll();
     }
@@ -59,7 +74,9 @@ public class WebhookEventPersistenceTest {
         CreateEndpointResponse endpointResponse = service.create(
                 new CreateEndpointRequest(
                         "payment-events",
-                        "https://example.com/webhooks"
+                        "https://example.com/webhooks",
+                        null,
+                        null
                 )
         );
 
@@ -95,92 +112,68 @@ public class WebhookEventPersistenceTest {
 
     @Test
     void shouldCreateEventAndPendingDeliveryAtomically() {
-        // Create active endpoint
-        // Publish event
-        // Assert one event and one PENDING delivery exist
         CreateEndpointResponse endpointResponse = service.create(
                 new CreateEndpointRequest(
                         "payment-events",
-                        "https://example.com/webhooks"
+                        "https://example.com/webhooks",
+                        null,
+                        null
                 )
         );
-
-        WebhookEndpoint endpoint = repository
-                .findById(endpointResponse.id())
-                .orElseThrow();
-
-        ObjectMapper objectMapper = new ObjectMapper();
 
         ObjectNode payload = objectMapper.createObjectNode();
         payload.put("paymentId", "pay-123");
         payload.put("amount", 4999);
 
-        WebhookEvent event = eventRepository.save(
-                WebhookEvent.create(
-                        "payment.completed",
-                        payload,
-                        "payment-pay-123-completed"
-                )
+        PublishEventResponse published = publishEventService.publish(
+                endpointResponse.id(),
+                "payment-pay-123-completed",
+                new PublishEventRequest("payment.completed", payload)
         );
 
-        WebhookDelivery delivery = deliveryRepository.saveAndFlush(
-                WebhookDelivery.pending(event, endpoint)
-        );
-
-        assertThat(event.getId()).isNotNull();
-        assertThat(delivery.getId()).isNotNull();
+        WebhookDelivery delivery = deliveryRepository
+                .findById(published.deliveryId()).orElseThrow();
+        assertThat(eventRepository.count()).isEqualTo(1);
+        assertThat(deliveryRepository.count()).isEqualTo(1);
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT count(*) FROM event_outbox WHERE event_id = ?",
+                Long.class, published.eventId()
+        )).isEqualTo(1L);
         assertThat(delivery.getStatus())
                 .isEqualTo(DeliveryStatus.PENDING);
         assertThat(delivery.getAttemptCount()).isZero();
-        assertThat(delivery.getVersion()).isZero();
     }
 
     @Test
     void shouldReturnOriginalResultForIdempotentReplay() {
-        // Publish twice with the same key and payload
-        // Assert IDs match and database counts remain 1
         CreateEndpointResponse endpointResponse = service.create(
                 new CreateEndpointRequest(
                         "payment-events",
-                        "https://example.com/webhooks"
+                        "https://example.com/webhooks",
+                        null,
+                        null
                 )
         );
-
-        WebhookEndpoint endpoint = repository
-                .findById(endpointResponse.id())
-                .orElseThrow();
-
-        ObjectMapper objectMapper = new ObjectMapper();
 
         ObjectNode payload = objectMapper.createObjectNode();
         payload.put("paymentId", "pay-123");
         payload.put("amount", 4999);
 
-        WebhookEvent event = eventRepository.save(
-                WebhookEvent.create(
-                        "payment.completed",
-                        payload,
-                        "payment-pay-123-completed"
-                )
+        PublishEventRequest request = new PublishEventRequest(
+                "payment.completed", payload
+        );
+        PublishEventResponse first = publishEventService.publish(
+                endpointResponse.id(), "payment-pay-123-completed", request
+        );
+        PublishEventResponse second = publishEventService.publish(
+                endpointResponse.id(), "payment-pay-123-completed", request
         );
 
-        WebhookDelivery delivery = deliveryRepository.saveAndFlush(
-                WebhookDelivery.pending(event, endpoint)
-        );
-
-        WebhookEvent event2 = eventRepository.save(
-                WebhookEvent.create(
-                        "payment.completed",
-                        payload,
-                        "payment-pay-123-completed"
-                )
-        );
-
-        WebhookDelivery delivery2 = deliveryRepository.saveAndFlush(
-                WebhookDelivery.pending(event, endpoint)
-        );
-
-        assertThat(event.getId()).isEqualTo(event2.getId());
+        assertThat(second.eventId()).isEqualTo(first.eventId());
+        assertThat(second.deliveryId()).isEqualTo(first.deliveryId());
+        assertThat(second.replayed()).isTrue();
+        assertThat(eventRepository.count()).isEqualTo(1);
+        assertThat(deliveryRepository.count()).isEqualTo(1);
     }
 
     @Test
@@ -188,7 +181,9 @@ public class WebhookEventPersistenceTest {
         CreateEndpointResponse endpoint = service.create(
                 new CreateEndpointRequest(
                         "payment-events",
-                        "https://example.com/webhooks"
+                        "https://example.com/webhooks",
+                        null,
+                        null
                 )
         );
 
@@ -244,7 +239,9 @@ public class WebhookEventPersistenceTest {
         CreateEndpointResponse endpoint = service.create(
                 new CreateEndpointRequest(
                         "payment-events",
-                        "https://example.com/webhooks"
+                        "https://example.com/webhooks",
+                        null,
+                        null
                 )
         );
 
@@ -252,7 +249,9 @@ public class WebhookEventPersistenceTest {
                 new UpdateEndpointRequest(
                         null,
                         null,
-                        EndpointStatus.DISABLED
+                        EndpointStatus.DISABLED,
+                        null,
+                        null
                 );
 
         EndpointResponse disabledEndpoint = service.update(
@@ -296,7 +295,9 @@ public class WebhookEventPersistenceTest {
         CreateEndpointResponse endpoint = service.create(
                 new CreateEndpointRequest(
                         "recovery-endpoint",
-                        "http://localhost:9999/webhook"
+                        "http://localhost:9999/webhook",
+                        null,
+                        null
                 )
         );
 
@@ -356,7 +357,9 @@ public class WebhookEventPersistenceTest {
         CreateEndpointResponse endpoint = service.create(
                 new CreateEndpointRequest(
                         "concurrent-endpoint",
-                        "http://localhost:9999/webhook"
+                        "http://localhost:9999/webhook",
+                        null,
+                        null
                 )
         );
 
@@ -382,12 +385,8 @@ public class WebhookEventPersistenceTest {
             ready.countDown();
             start.await();
 
-            return deliveryStateService
-                    .claimDueBatch(
-                            Instant.now(),
-                            10
-                    )
-                    .size();
+            return deliveryStateService.claimNextDue().claimed() == null
+                    ? 0 : 1;
         };
 
         try {

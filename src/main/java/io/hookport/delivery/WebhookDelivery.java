@@ -191,4 +191,16 @@ public class WebhookDelivery {
         return status == DeliveryStatus.FAILED
                 || status == DeliveryStatus.EXHAUSTED;
     }
+
+    public void deferUntil(Instant eligibleAt) {
+        if (status != DeliveryStatus.PENDING
+                && status != DeliveryStatus.RETRY_SCHEDULED) {
+            throw new IllegalStateException(
+                    "Only a waiting delivery can be deferred"
+            );
+        }
+
+        nextAttemptAt = eligibleAt;
+        updatedAt = Instant.now();
+    }
 }

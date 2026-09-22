@@ -1,6 +1,7 @@
 package io.hookport.endpoint;
 
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Positive;
 import jakarta.validation.constraints.Size;
 
 public record CreateEndpointRequest(
@@ -11,6 +12,12 @@ public record CreateEndpointRequest(
 
         @NotBlank
         @Size(max = 2048)
-        String targetUrl
+        String targetUrl,
+
+        @Positive
+        Integer bucketCapacity,
+
+        @Positive
+        Integer refillPerSecond
 ) {
 }

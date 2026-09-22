@@ -1,5 +1,7 @@
 package io.hookport.delivery;
 
+import io.hookport.endpoint.EndpointRateBucket;
+import io.hookport.endpoint.EndpointRateBucketRepository;
 import io.hookport.endpoint.EndpointStatus;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -21,24 +23,77 @@ public class DeliveryStateService {
     private final DeliveryAttemptRepository attemptRepository;
     private final RetryPolicy retryPolicy;
     private final DeliveryProperties properties;
-
+    private final EndpointRateBucketRepository buckets;
 
     public DeliveryStateService(
             WebhookDeliveryRepository repository,
             DeliveryAttemptRepository attemptRepository,
             RetryPolicy retryPolicy,
-            DeliveryProperties properties
+            DeliveryProperties properties,
+            EndpointRateBucketRepository endpointRateBucketRepository
     ) {
         this.repository = repository;
         this.attemptRepository = attemptRepository;
         this.retryPolicy = retryPolicy;
         this.properties = properties;
+        this.buckets = endpointRateBucketRepository;
     }
 
     @Transactional
     public ClaimedDelivery claim(UUID deliveryId) {
-        WebhookDelivery delivery = find(deliveryId);
-        return claimLoadedDelivery(delivery);
+        WebhookDelivery delivery = repository
+                .findByIdForClaim(deliveryId)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.CONFLICT,
+                        "Delivery is locked or does not exist"
+                ));
+
+        if (delivery.getEndpoint().getStatus()
+                != EndpointStatus.ACTIVE) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "The webhook endpoint is disabled"
+            );
+        }
+
+        if (delivery.getStatus() != DeliveryStatus.PENDING
+                && delivery.getStatus()
+                != DeliveryStatus.RETRY_SCHEDULED) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "Delivery is not claimable"
+            );
+        }
+
+        if (delivery.getNextAttemptAt() != null
+                && delivery.getNextAttemptAt().isAfter(Instant.now())) {
+            throw new ResponseStatusException(
+                    HttpStatus.TOO_MANY_REQUESTS,
+                    "Delivery is not due yet"
+            );
+        }
+
+        EndpointRateBucket bucket = buckets
+                .findForClaim(delivery.getEndpoint().getId())
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.TOO_MANY_REQUESTS,
+                        "Endpoint bucket is busy"
+                ));
+
+        if (!bucket.trySpendOne(Instant.now())) {
+            // Do not defer here: throwing rolls this transaction back.
+            // The scheduler can defer the delivery on its next pass.
+            throw new ResponseStatusException(
+                    HttpStatus.TOO_MANY_REQUESTS,
+                    "Endpoint rate limit is exhausted"
+            );
+        }
+
+        ClaimedDelivery claimed = claimLoadedDelivery(delivery);
+        buckets.flush();
+        repository.flush();
+        attemptRepository.flush();
+        return claimed;
     }
 
     private WebhookDelivery find(UUID deliveryId) {
@@ -102,21 +157,45 @@ public class DeliveryStateService {
     }
 
     @Transactional
-    public List<ClaimedDelivery> claimDueBatch(
-            Instant now,
-            int batchSize
-    ) {
-        List<WebhookDelivery> deliveries =
-                repository.findDueForUpdate(now, batchSize);
+    public ClaimDecision claimNextDue() {
+        Instant now = Instant.now();
 
-        List<ClaimedDelivery> claimed = deliveries.stream()
-                .map(this::claimLoadedDelivery)
-                .toList();
+        List<WebhookDelivery> due =
+                repository.findDueForUpdate(now, 1);
 
+        if (due.isEmpty()) {
+            return ClaimDecision.empty();
+        }
+
+        WebhookDelivery delivery = due.getFirst();
+
+        var lockedBucket = buckets.findForClaim(
+                delivery.getEndpoint().getId()
+        );
+
+        if (lockedBucket.isEmpty()) {
+            // Another worker has the bucket. Move this delivery briefly
+            // so this polling pass can reach other endpoints.
+            delivery.deferUntil(now.plusMillis(100));
+            repository.flush();
+            return ClaimDecision.deferred();
+        }
+
+        EndpointRateBucket bucket = lockedBucket.get();
+
+        if (!bucket.trySpendOne(now)) {
+            delivery.deferUntil(bucket.nextTokenAt(now));
+            buckets.flush();
+            repository.flush();
+            return ClaimDecision.deferred();
+        }
+
+        ClaimedDelivery claimed = claimLoadedDelivery(delivery);
+        buckets.flush();
         repository.flush();
         attemptRepository.flush();
 
-        return claimed;
+        return ClaimDecision.claimed(claimed);
     }
 
     private ClaimedDelivery claimLoadedDelivery(

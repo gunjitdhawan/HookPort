@@ -14,7 +14,10 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@SpringBootTest
+@SpringBootTest(properties = {
+        "hookport.delivery.scheduling-enabled=false",
+        "hookport.outbox.enabled=false"
+})
 @Testcontainers
 class WebhookEndpointIntegrationTest {
 
@@ -29,6 +32,9 @@ class WebhookEndpointIntegrationTest {
     @Autowired
     private WebhookEndpointRepository repository;
 
+    @Autowired
+    private EndpointRateBucketRepository bucketRepository;
+
     @BeforeEach
     void cleanDatabase() {
         repository.deleteAll();
@@ -38,7 +44,9 @@ class WebhookEndpointIntegrationTest {
     void shouldCreateAndPersistWebhookEndpoint() {
         CreateEndpointRequest request = new CreateEndpointRequest(
                 "payment-events",
-                "https://example.com/webhooks/payments"
+                "https://example.com/webhooks/payments",
+                null,
+                null
         );
 
         CreateEndpointResponse created = service.create(request);
@@ -48,6 +56,11 @@ class WebhookEndpointIntegrationTest {
         assertThat(created.status()).isEqualTo(EndpointStatus.ACTIVE);
         assertThat(created.version()).isZero();
         assertThat(created.signingSecret()).isNotBlank();
+        assertThat(created.bucketCapacity()).isEqualTo(5);
+        assertThat(created.refillPerSecond()).isEqualTo(5);
+        EndpointRateBucket bucket = bucketRepository.findById(created.id()).orElseThrow();
+        assertThat(bucket.getCapacity()).isEqualTo(5);
+        assertThat(bucket.getRefillPerSecond()).isEqualTo(5);
 
         WebhookEndpoint persisted = repository
                 .findById(created.id())
@@ -64,7 +77,9 @@ class WebhookEndpointIntegrationTest {
     void shouldRejectDuplicateEndpointName() {
         CreateEndpointRequest request = new CreateEndpointRequest(
                 "payment-events",
-                "https://example.com/first"
+                "https://example.com/first",
+                null,
+                null
         );
 
         service.create(request);
@@ -72,7 +87,9 @@ class WebhookEndpointIntegrationTest {
         assertThatThrownBy(() -> service.create(
                 new CreateEndpointRequest(
                         "payment-events",
-                        "https://example.com/second"
+                        "https://example.com/second",
+                        null,
+                        null
                 )
         ))
                 .isInstanceOf(ResponseStatusException.class)
@@ -92,7 +109,9 @@ class WebhookEndpointIntegrationTest {
         CreateEndpointResponse created = service.create(
                 new CreateEndpointRequest(
                         "payment-events",
-                        "https://example.com/original"
+                        "https://example.com/original",
+                        null,
+                        null
                 )
         );
 
@@ -101,7 +120,9 @@ class WebhookEndpointIntegrationTest {
                 new UpdateEndpointRequest(
                         null,
                         "https://example.com/updated",
-                        EndpointStatus.DISABLED
+                        EndpointStatus.DISABLED,
+                        null,
+                        null
                 ),
                 created.version()
         );
@@ -121,7 +142,9 @@ class WebhookEndpointIntegrationTest {
         CreateEndpointResponse created = service.create(
                 new CreateEndpointRequest(
                         "payment-events",
-                        "https://example.com/original"
+                        "https://example.com/original",
+                        null,
+                        null
                 )
         );
 
@@ -130,7 +153,9 @@ class WebhookEndpointIntegrationTest {
                 new UpdateEndpointRequest(
                         null,
                         null,
-                        EndpointStatus.DISABLED
+                        EndpointStatus.DISABLED,
+                        null,
+                        null
                 ),
                 created.version()
         );
@@ -143,7 +168,9 @@ class WebhookEndpointIntegrationTest {
                 new UpdateEndpointRequest(
                         null,
                         null,
-                        EndpointStatus.ACTIVE
+                        EndpointStatus.ACTIVE,
+                        null,
+                        null
                 ),
                 created.version()
         ))
@@ -158,11 +185,41 @@ class WebhookEndpointIntegrationTest {
     }
 
     @Test
+    void shouldUpdateRateSettingsAndVersion() {
+        CreateEndpointResponse created = service.create(
+                new CreateEndpointRequest(
+                        "rate-events",
+                        "https://example.com/webhooks",
+                        2,
+                        1
+                )
+        );
+
+        EndpointResponse updated = service.update(
+                created.id(),
+                new UpdateEndpointRequest(null, null, null, 3, 2),
+                created.version()
+        );
+
+        assertThat(updated.bucketCapacity()).isEqualTo(3);
+        assertThat(updated.refillPerSecond()).isEqualTo(2);
+        assertThat(updated.version()).isEqualTo(created.version() + 1);
+        assertThat(service.getById(created.id()).bucketCapacity())
+                .isEqualTo(3);
+        EndpointRateBucket bucket = bucketRepository
+                .findById(created.id()).orElseThrow();
+        assertThat(bucket.getCapacity()).isEqualTo(3);
+        assertThat(bucket.getRefillPerSecond()).isEqualTo(2);
+    }
+
+    @Test
     void shouldNeverExposeSigningSecretInReadResponse() {
         CreateEndpointResponse created = service.create(
                 new CreateEndpointRequest(
                         "payment-events",
-                        "https://example.com/webhooks"
+                        "https://example.com/webhooks",
+                        null,
+                        null
                 )
         );
 

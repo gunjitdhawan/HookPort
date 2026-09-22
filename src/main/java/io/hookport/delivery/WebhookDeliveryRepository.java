@@ -62,4 +62,14 @@ public interface WebhookDeliveryRepository
     long countByStatusIn(
             Collection<DeliveryStatus> statuses
     );
+
+    @Query(value = """
+    SELECT *
+    FROM webhook_deliveries
+    WHERE id = :deliveryId
+    FOR UPDATE SKIP LOCKED
+    """, nativeQuery = true)
+    Optional<WebhookDelivery> findByIdForClaim(
+            @Param("deliveryId") UUID deliveryId
+    );
 }

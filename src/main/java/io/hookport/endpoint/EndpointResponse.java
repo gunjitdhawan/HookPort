@@ -10,8 +10,12 @@ public record EndpointResponse(
     EndpointStatus status,
     Instant createdAt,
     Instant updatedAt,
-    Long version) {
-    public static EndpointResponse from(WebhookEndpoint endpoint) {
+    Long version,
+    int bucketCapacity,
+    int refillPerSecond) {
+
+
+    public static EndpointResponse from(WebhookEndpoint endpoint, EndpointRateBucket bucket) {
         return new EndpointResponse(
                 endpoint.getId(),
                 endpoint.getName(),
@@ -19,7 +23,9 @@ public record EndpointResponse(
                 endpoint.getStatus(),
                 endpoint.getCreatedAt(),
                 endpoint.getUpdatedAt(),
-                endpoint.getVersion()
+                endpoint.getVersion(),
+                bucket.getCapacity(),
+                bucket.getRefillPerSecond()
         );
     }
 }

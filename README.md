@@ -15,6 +15,8 @@ flowchart TD
 
 Publishing stores an event and a pending delivery. A scheduled worker claims due deliveries in a short database transaction, then sends the HTTP request outside that transaction. It records the result and either finishes or schedules another attempt. Concurrent workers use PostgreSQL row locking with `SKIP LOCKED`; deliveries stuck in progress can be recovered. Delivery is **at least once**: a receiver should make processing idempotent using the event ID.
 
+Each endpoint has a PostgreSQL-backed token bucket. It starts with a capacity of 5 tokens and refills at 5 tokens per second unless configured otherwise. Claiming a delivery spends one token. When none is available, the delivery waits without an HTTP request, attempt record, or retry-budget charge. The bucket limits **claims**, not the exact spacing of completed HTTP sends. A committed claim spends its token even if the worker crashes before sending.
+
 ## Run locally
 
 Requirements: Docker with Compose. From the project root:
@@ -42,7 +44,9 @@ curl -i -X POST http://localhost:8080/api/v1/endpoints \
   -H 'Content-Type: application/json' \
   -d '{
     "name": "google-demo",
-    "targetUrl": "https://google.com"
+    "targetUrl": "https://google.com",
+    "bucketCapacity": 5,
+    "refillPerSecond": 5
   }'
 ```
 

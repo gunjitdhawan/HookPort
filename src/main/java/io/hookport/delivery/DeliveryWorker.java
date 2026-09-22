@@ -29,26 +29,25 @@ public class DeliveryWorker {
     }
 
     public int runOnce() {
-        List<ClaimedDelivery> deliveries =
-                stateService.claimDueBatch(
-                        Instant.now(),
-                        properties.getBatchSize()
-                );
+        int claimedCount = 0;
 
-        metrics.recordClaimed(deliveries.size());
+        while (claimedCount < properties.getBatchSize()) {
+            ClaimDecision decision = stateService.claimNextDue();
 
-        if (!deliveries.isEmpty()) {
-            log.info(
-                    "Claimed delivery batch: count={}",
-                    deliveries.size()
-            );
+            if (!decision.foundDueDelivery()) {
+                break;
+            }
+
+            if (decision.claimed() == null) {
+                continue; // Deferred one; look for another endpoint.
+            }
+
+            claimedCount++;
+            metrics.recordClaimed(1);
+            processor.processClaimed(decision.claimed());
         }
 
-        for (ClaimedDelivery delivery : deliveries) {
-            processor.processClaimed(delivery);
-        }
-
-        return deliveries.size();
+        return claimedCount;
     }
 
     public int recoverStuck() {
